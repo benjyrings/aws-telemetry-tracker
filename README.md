@@ -27,3 +27,14 @@ Proyek ini dibangun untuk menerapkan konsep fundamental *Serverless*, *Storage*,
    ├──► [Amazon CloudWatch Logs]     ──► Analisis via Logs Insights
    ├──► [Amazon CloudWatch Metrics]  ──► Grafik EndpointLatency (Custom Namespace)
    └──► [Amazon S3 (Partitioned)]    ──► Kueri SQL via Amazon Athena (Partition Projection)
+
+## Dokumentasi Visual
+
+### 1. AWS CloudFormation (`CREATE_COMPLETE` pada seluruh 8 resource)
+![AWS CloudFormation Resources](docs/cloudformation-resources.png)
+
+### 2. Amazon CloudWatch Custom Metrics (`EndpointLatency` per layanan)
+![Amazon CloudWatch Metrics](docs/cloudwatch-metrics.png)
+
+### 3. Amazon Athena Query Editor (Agregasi & Partition Projection)
+![Amazon Athena Query Results](docs/athena-query-results.png)
