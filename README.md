@@ -27,7 +27,7 @@ Proyek ini dibangun untuk menerapkan konsep fundamental *Serverless*, *Storage*,
    ├──► [Amazon CloudWatch Logs]     ──► Analisis via Logs Insights
    ├──► [Amazon CloudWatch Metrics]  ──► Grafik EndpointLatency (Custom Namespace)
    └──► [Amazon S3 (Partitioned)]    ──► Kueri SQL via Amazon Athena (Partition Projection)
-
+```
 ## Dokumentasi Visual
 
 ### 1. AWS CloudFormation (`CREATE_COMPLETE` pada seluruh 8 resource)
