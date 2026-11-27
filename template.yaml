@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Serverless Telemetry & Observability Mini-Tracker (Minimalist Cost)
+
+Resources:
+  TelemetryBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDeleteAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+
+  TelemetryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TelemetryWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${TelemetryBucket.Arn}/*'
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+
+  TelemetryIngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: telemetry-ingest-handler
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt TelemetryLambdaRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref TelemetryBucket
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from datetime import datetime, timezone
+
+          s3 = boto3.client('s3')
+          cw = boto3.client('cloudwatch')
+          BUCKET = os.environ['BUCKET_NAME']
+
+          def lambda_handler(event, context):
+              body = json.loads(event.get('body') or '{}')
+              service = body.get('service_name', 'unknown-service')
+              latency = float(body.get('latency_ms', 0))
+              status = int(body.get('status_code', 200))
+
+              now = datetime.now(timezone.utc)
+              record = {
+                  'timestamp': now.isoformat(),
+                  'service_name': service,
+                  'latency_ms': latency,
+                  'status_code': status,
+                  'request_id': context.aws_request_id
+              }
+
+              # 1. Structured log untuk CloudWatch Logs Insights
+              print(json.dumps({'level': 'INFO', 'telemetry': record}))
+
+              # 2. Kirim metrik kustom ke CloudWatch
+              cw.put_metric_data(
+                  Namespace='Custom/TelemetryTracker',
+                  MetricData=[{
+                      'MetricName': 'EndpointLatency',
+                      'Dimensions': [{'Name': 'ServiceName', 'Value': service}],
+                      'Value': latency,
+                      'Unit': 'Milliseconds'
+                  }]
+              )
+
+              # 3. Simpan data terpartisi ke Amazon S3 untuk Athena
+              key = f"telemetry/year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/{context.aws_request_id}.json"
+              s3.put_object(
+                  Bucket=BUCKET,
+                  Key=key,
+                  Body=json.dumps(record) + '\n',
+                  ContentType='application/json'
+              )
+
+              return {
+                  'statusCode': 200,
+                  'headers': {'Content-Type': 'application/json'},
+                  'body': json.dumps({'message': 'Recorded', 's3_key': key})
+              }
+
+  TelemetryHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: telemetry-mini-api
+      ProtocolType: HTTP
+
+  TelemetryIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref TelemetryHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt TelemetryIngestFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  TelemetryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref TelemetryHttpApi
+      RouteKey: 'POST /telemetry'
+      Target: !Sub 'integrations/${TelemetryIntegration}'
+
+  TelemetryStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref TelemetryHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  TelemetryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TelemetryIngestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TelemetryHttpApi}/*/*/telemetry'
+
+Outputs:
+  ApiEndpoint:
+    Description: Endpoint URL untuk mengirim data telemetri
+    Value: !Sub '${TelemetryHttpApi.ApiEndpoint}/telemetry'
+  BucketName:
+    Description: Nama bucket S3 penyimpanan log terpartisi
+    Value: !Ref TelemetryBucket
